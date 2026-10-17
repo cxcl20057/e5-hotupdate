@@ -1,0 +1,10 @@
+cee7de32c30811d45662d3577ca5cb8c094a6d79d58966e7004efe6a394712bc  files/etc/config/e5-charge-mode
+f1a93c48532a829453c8789006c0caf96e53eeaf916d7ef79a8432ff57c8c109  files/etc/init.d/e5-charge-mode
+81277604c305411e4085bb1d848f8ef10b49ed880932e35ff2916719fdff9e07  files/etc/uci-defaults/98-e5-charge-mode
+e148c6e76ec01f917fe4f40ea0c5ba322e5f47728b4d6dc3138c601d59b04b6a  files/usr/libexec/e5-charge-mode
+ca1010cd3b63f9983a22b33acde53d04183abf1986e51150f2cc63b18b8e4555  files/usr/share/luci/menu.d/luci-app-e5-charge-mode.json
+a1e022354d118f3661c579e574f56321277ebb68754179cd4f6329b7c64527e3  files/usr/share/rpcd/acl.d/luci-app-e5-charge-mode.json
+7338f36299bfc2fd235b494ac7c8e080665a520d531b9811a13139f3a2df6d17  files/www/luci-static/resources/view/e5-charge-mode/settings.js
+7ef371599acdadc0cee89281c12728a6166f66322d67f27edd6f544cc3dbacda  files/www/luci-static/resources/view/mu300/at.js
+1a665caeeee3184282169a794f1679bdfe7aeee496b2b5f500d2a96c215880b2  install.sh
+bd96f0182b5d0327c68552133e5a1932b50228f519309f4137610117f74ff46b  README.md
