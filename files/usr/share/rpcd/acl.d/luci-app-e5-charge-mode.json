@@ -1,0 +1,11 @@
+{
+	"luci-app-e5-charge-mode": {
+		"description": "Grant access to the charger-mode switch",
+		"read": {
+			"uci": [ "e5-charge-mode" ]
+		},
+		"write": {
+			"uci": [ "e5-charge-mode" ]
+		}
+	}
+}
