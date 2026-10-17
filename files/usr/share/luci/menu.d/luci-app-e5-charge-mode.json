@@ -1,0 +1,13 @@
+{
+	"admin/services/e5-charge-mode": {
+		"title": "充电模式",
+		"order": 57,
+		"action": {
+			"type": "view",
+			"path": "e5-charge-mode/settings"
+		},
+		"depends": {
+			"acl": [ "luci-app-e5-charge-mode" ]
+		}
+	}
+}
