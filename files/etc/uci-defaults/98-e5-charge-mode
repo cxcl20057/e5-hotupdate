@@ -1,0 +1,19 @@
+#!/bin/sh
+# 充电模式开关的默认值 / default of the charger-mode switch.
+# 只在选项缺失时写入，保证升级/热更新不会重置用户已设的值。
+# See /usr/libexec/e5-charge-mode and /etc/init.d/e5-charge-mode.
+
+[ -f /etc/config/e5-charge-mode ] || touch /etc/config/e5-charge-mode
+uci -q get e5-charge-mode.main.enabled >/dev/null || {
+	uci set e5-charge-mode.main=main
+	uci set e5-charge-mode.main.enabled='1'
+	uci commit e5-charge-mode
+}
+
+# 服务自启（rc.common enable 需要 ubus；此处直接做软链，镜像构建期同样做法）
+[ -x /etc/init.d/e5-charge-mode ] && {
+	[ -e /etc/rc.d/S14e5-charge-mode ] || \
+		ln -sf ../init.d/e5-charge-mode /etc/rc.d/S14e5-charge-mode
+}
+
+exit 0
