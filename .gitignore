@@ -1,0 +1,13 @@
+# 打包产物（用 release 附件分发，不进版本库）
+*.tar.gz
+*.zip
+
+# Python
+__pycache__/
+*.py[cod]
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+*~
