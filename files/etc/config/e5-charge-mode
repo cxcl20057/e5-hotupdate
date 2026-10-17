@@ -1,0 +1,7 @@
+config main 'main'
+	# 插充电器开机时的行为 / behaviour when booting with a charger plugged in
+	#   1 (default): 直接进入 OpenWrt 系统（E5 的历史默认行为）
+	#   0:           停在充电界面，等待长按电源键 1.5 秒后继续启动
+	#
+	# 该开关只影响"充电器插着开机"这一次启动，不影响正常按键开机。
+	option enabled '1'
