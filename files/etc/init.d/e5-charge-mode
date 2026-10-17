@@ -1,0 +1,18 @@
+#!/bin/sh /etc/rc.common
+# 充电器启动门控 / Charger-boot gate (see /usr/libexec/e5-charge-mode).
+#
+# START=14：在硬件(logging)之后、vendor/基带/网络之前同步运行，与官方
+# boot/init 中 S14 的位置一致（docs: "S14 gates before hotspot, baseband
+# and desktop"）。
+#
+# 仅作用于"插着充电器开机"这一次启动；普通按键启动不受影响。
+# 手动 start 在已运行的系统上不会重入充电流程（脚本内会判断启动原因）。
+
+START=14
+
+boot() {
+	# /etc/config/e5-charge-mode main.enabled:
+	#   1 (默认) 直接进系统；0 停在充电界面等长按电源键
+	# 开关判断在脚本内部完成（缺失 UCI 时按默认放行）。
+	/usr/bin/python3 /usr/libexec/e5-charge-mode || true
+}
