@@ -1,0 +1,210 @@
+#!/usr/bin/python3
+"""充电器启动门控 / Charger-boot gate.
+
+在 OpenWrt 的 rootfs 侧（而非内核 initramfs）判断：本次启动是否是"插着充电器
+开机"。若是，且 /etc/config/e5-charge-mode 的 main.enabled = 0，则停在充电界面，
+等待长按电源键 1.5 秒后放行，否则立即返回让系统继续启动。
+
+设计说明 / Why it lives here:
+  * E5 的内核启动镜像 boot/init 已经把"充电器模式"记入日志并按普通启动继续；
+    那部分在 boot 分区，热更新无法改动。因此本门控放在 rootfs 的 init 服务里，
+    在 rcS 早期（S14，硬件已就绪、vendor 与网络之前）运行。
+  * 本脚本自包含：只依赖 OpenWrt 自带的 busybox/python3 与 /sys、/proc，不引用
+    任何 t551m 时代的 e5-charge-screen 等未安装文件。
+
+退出码 / exit status:
+  0  放行（不是充电启动，或开关关闭，或已满足继续条件）
+  1  不可恢复的配置/环境错误（调用方据此选择是否继续）
+"""
+import os
+import re
+import select
+import struct
+import sys
+import time
+from pathlib import Path
+
+SYS = Path('/sys')
+STATE = Path('/run/charge-mode.json')
+EVENT = struct.Struct('@llHHi')
+KEY_POWER = 116
+HOLD = 1.5
+UNPLUG_DEBOUNCE = 0.5
+
+
+def log(msg):
+    print('e5-charge-mode: ' + msg, flush=True)
+
+
+def report(state, reason):
+    try:
+        STATE.write_text('{"state": "%s", "reason": "%s"}\n' % (state, reason))
+    except OSError:
+        pass
+
+
+def charger_boot():
+    """本次是否由充电器触发启动（LK 传入 sprdboot.mode=charger）。"""
+    for path in (SYS / 'firmware/devicetree/base/chosen/bootargs',
+                 Path('/proc/cmdline')):
+        try:
+            text = path.read_bytes().decode('latin-1').replace('\0', ' ')
+        except OSError:
+            continue
+        if re.search(r'(?:^|\s)(?:sprdboot|androidboot)\.mode=charger(?:\s|$)', text):
+            return True
+    return False
+
+
+def config_enabled():
+    """默认 1（直接进系统）；缺失视为默认。"""
+    import subprocess
+    try:
+        out = subprocess.run(['uci', '-q', 'get', 'e5-charge-mode.main.enabled'],
+                             capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return True
+    value = out.stdout.strip()
+    return value != '0'
+
+
+def cable_online():
+    values = []
+    for supply in (SYS / 'class/power_supply').glob('*'):
+        try:
+            kind = (supply / 'type').read_text().strip()
+            if kind == 'Battery':
+                continue
+            if (kind in ('Mains', 'Wireless') or kind.startswith('USB')
+                    or supply.name in ('ac', 'usb', 'wireless')):
+                v = (supply / 'online').read_text().strip()
+                if v in ('0', '1'):
+                    values.append(v == '1')
+        except OSError:
+            continue
+    return any(values) if values else None
+
+
+def power_keys():
+    keys = []
+    for device in (SYS / 'class/input').glob('event*'):
+        try:
+            key = (device / 'device/capabilities/key').read_text()
+        except OSError:
+            continue
+        words = key.split()[::-1]
+        word, offset = divmod(KEY_POWER, struct.calcsize('@L') * 8)
+        if word < len(words) and (int(words[word], 16) & (1 << offset)):
+            keys.append(Path('/dev/input') / device.name)
+    return keys
+
+
+def power_is_down(fd):
+    keys = bytearray(96)
+    try:
+        import fcntl
+        fcntl.ioctl(fd, 0x80000000 | (len(keys) << 16) | (ord('E') << 8) | 0x18, keys)
+    except OSError:
+        return False
+    return bool(keys[KEY_POWER // 8] & (1 << (KEY_POWER % 8)))
+
+
+def wait_for_power(keys):
+    """等长按电源键 1.5 秒，或充电器被拔掉。"""
+    descriptors = {}
+    pressed = {}
+    disconnected = None
+    try:
+        for key in keys:
+            try:
+                fd = os.open(key, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+            except OSError:
+                continue
+            descriptors[fd] = b''
+            if power_is_down(fd):
+                pressed[fd] = time.monotonic()
+        while True:
+            for fd in select.select(list(descriptors), [], [], 0.1)[0]:
+                chunk = os.read(fd, EVENT.size * 64)
+                if not chunk:
+                    continue
+                data = descriptors[fd] + chunk
+                count = len(data) // EVENT.size * EVENT.size
+                for _, _, kind, code, value in EVENT.iter_unpack(data[:count]):
+                    if kind == 0 and code == 3:
+                        pressed.pop(fd, None)
+                    elif kind == 1 and code == KEY_POWER:
+                        if value == 1:
+                            pressed.setdefault(fd, time.monotonic())
+                        elif value == 0:
+                            pressed.pop(fd, None)
+                descriptors[fd] = data[count:]
+            now = time.monotonic()
+            for fd, start in list(pressed.items()):
+                if now - start >= HOLD and power_is_down(fd):
+                    return 'power-key'
+                if now - start >= HOLD:
+                    pressed.pop(fd, None)
+            online = cable_online()
+            if online is False:
+                disconnected = disconnected or now
+                if now - disconnected >= UNPLUG_DEBOUNCE:
+                    return 'cable-removed'
+            else:
+                disconnected = None
+    finally:
+        for fd in descriptors:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def main():
+    if Path('/tmp/.failsafe').exists():
+        return 0
+    if not charger_boot():
+        logger = log
+        logger('not a charger boot; continuing')
+        report('normal', 'not-charger-boot')
+        return 0
+    if config_enabled():
+        log('charger boot; switch enabled -> booting the system')
+        report('normal', 'enabled')
+        return 0
+
+    log('charger boot; switch disabled -> holding on the charging screen')
+    # 等硬件就绪（输入设备出现），最多 10 秒
+    deadline = time.monotonic() + 10
+    keys = []
+    while time.monotonic() < deadline:
+        keys = power_keys()
+        if keys:
+            break
+        time.sleep(0.1)
+    if not keys:
+        log('no power key found; continuing normal boot')
+        report('normal', 'no-power-key')
+        return 0
+
+    report('charging', 'waiting for a 1.5 second power press')
+    reason = wait_for_power(keys)
+    if reason == 'cable-removed':
+        log('charger removed; continuing normal boot')
+        report('normal', 'cable-removed')
+        return 0
+    log('power key held; continuing normal boot')
+    report('normal', reason)
+    return 0
+
+
+if __name__ == '__main__':
+    try:
+        with open('/run/charge-mode.lock', 'a') as lock:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            sys.exit(main())
+    except (OSError, ValueError, RuntimeError) as error:
+        log('recovery: ' + str(error))
+        report('normal', 'recovery: ' + str(error))
+        sys.exit(0)
